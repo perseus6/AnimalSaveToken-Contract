@@ -14,12 +14,13 @@ contract SAT is Ownable, ERC20 {
     address public pancakeV2Pair;
     IPancakeRouter02 public router;
 
-    uint256 treasuryFee;
+    uint256 buybackFee;
     uint256 marketingFee;
     uint256 liquidityFee;
 
-    address public treasuryAddress;
+    address public buybackAddress;
     address public marketingAddress;
+    address public liquidityAddress;
 
     uint256 constant FEE_PRECISION = 1000;
 
@@ -49,11 +50,10 @@ contract SAT is Ownable, ERC20 {
 
       router = IPancakeRouter02(_router);
 
-    //   pancakeV2Pair = IPancakeFactory(router.factory())
-    //     .createPair(address(this), router.WETH());
+      pancakeV2Pair = IPancakeFactory(router.factory())
+        .createPair(address(this), router.WETH());
 
       _isExcludedFromFee[msg.sender] = true;
-
       _isExcludedFromFee[address(this)] = true;
 
       _approve(address(this), address(router), uint256(int(-1)));
@@ -68,14 +68,17 @@ contract SAT is Ownable, ERC20 {
     }
 
     function updateReceiver(
-      address _treasury,
-      address _marketing
+      address _buyback,
+      address _marketing,
+      address _liquidity
     ) external onlyOwner {
-      require(_treasury != address(0), "Null address");
+      require(_buyback != address(0), "Null address");
       require(_marketing != address(0), "Null address");
+      require(_liquidity != address(0), "Null address");
 
-      treasuryAddress = _treasury;
+      buybackAddress = _buyback;
       marketingAddress = _marketing;
+      liquidityAddress = _liquidity;
     }
 
     function _transfer(
@@ -95,14 +98,14 @@ contract SAT is Ownable, ERC20 {
             if(from == pancakeV2Pair) { // Buying
                 _feeAmount = amount.mul(60).div(FEE_PRECISION);
 
-                treasuryFee += _feeAmount.mul(20).div(60);
+                buybackFee += _feeAmount.mul(20).div(60);
                 marketingFee += _feeAmount.mul(20).div(60);
                 liquidityFee += _feeAmount.mul(20).div(60);
             }
             else {
                 _feeAmount = amount.mul(80).div(FEE_PRECISION);
                 
-                treasuryFee += _feeAmount.mul(30).div(80);
+                buybackFee += _feeAmount.mul(30).div(80);
                 marketingFee += _feeAmount.mul(20).div(80);
                 liquidityFee += _feeAmount.mul(30).div(80);
             }
@@ -110,15 +113,16 @@ contract SAT is Ownable, ERC20 {
             super._transfer(from, address(this), _feeAmount);
 
             amount = amount.sub(_feeAmount);
-          } else {
-            uint256 contractTokenBalance = balanceOf(address(this));
+          } 
+        //   else {
+        //     uint256 contractTokenBalance = balanceOf(address(this));
 
-            bool swapAmountOk = contractTokenBalance >= swapAmountThreshold;
+        //     bool swapAmountOk = contractTokenBalance >= swapAmountThreshold;
 
-            if (swapAmountOk && !swapping) {
-                distributeFee();
-            }
-          }
+        //     if (swapAmountOk && !swapping) {
+        //         distributeFee();
+        //     }
+        //   }
         }
 
         super._transfer(from, to, amount);
@@ -126,48 +130,18 @@ contract SAT is Ownable, ERC20 {
 
     function distributeFee() private Swapping {
 
-      uint256 amountRest;
-
-      uint256 amountLiquidity = liquidityFee;
-
-      uint256 tokenBalance = balanceOf(address(this));
-
-      amountRest = tokenBalance.sub(amountLiquidity);
-
-      uint256 initialBalance = address(this).balance;
-      
-      swapTokensForBNB(amountRest);
-
-      uint256 newBalance = address(this).balance.sub(initialBalance);
-
-      uint256 feeRest = treasuryFee.add(marketingFee);
-
-      uint256 bnbForTreasury = newBalance.mul(treasuryFee).div(feeRest);
-
-      Address.sendValue(payable(treasuryAddress), bnbForTreasury);
-      Address.sendValue(payable(marketingAddress), newBalance.sub(bnbForTreasury));
-
-      swapAndLiquify(liquidityFee);
-    }
-
-    function swapAndLiquify(uint256 tokens) private {
-
-        if (tokens == 0) return;
-
-        uint256 half = tokens.div(2);
-        uint256 otherHalf = tokens.sub(half);
-
+        uint256 tokenBalance = balanceOf(address(this));
         uint256 initialBalance = address(this).balance;
-
-        swapTokensForBNB(half);
-
+        swapTokensForBNB(tokenBalance);
         uint256 newBalance = address(this).balance.sub(initialBalance);
+        uint256 feeTotal = buybackFee.add(marketingFee).add(liquidityFee);
+      uint256 bnbForbuyback = newBalance.mul(buybackFee).div(feeTotal);
+      uint256 bnbForMarketing = newBalance.mul(marketingFee).div(feeTotal);
+      Address.sendValue(payable(buybackAddress), bnbForbuyback);
+      Address.sendValue(payable(marketingAddress), bnbForMarketing);
+      Address.sendValue(payable(liquidityAddress), newBalance.sub(bnbForbuyback).sub(bnbForMarketing));
 
-        if (newBalance == 0) return;
 
-        addLiquidity(otherHalf, newBalance);
-
-        emit SwapAndLiquify(half, newBalance, otherHalf);
     }
 
     function swapTokensForBNB(uint256 tokenAmount) private {
